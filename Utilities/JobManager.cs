@@ -43,6 +43,9 @@ namespace APSIM.Shared.Utilities
         [NonSerialized]
         private BackgroundWorker schedulerThread = null;
 
+        /// <summary>All jobs done?</summary>
+        private bool allDone = false;
+
         /// <summary>
         /// Gets a value indicating whether there are more jobs to run.
         /// </summary>
@@ -53,21 +56,50 @@ namespace APSIM.Shared.Utilities
             {
                 lock (this)
                 {
-                    return jobs.Count > 0;
+                    return !allDone;
                 }
             }
         }
 
+        /// <summary>
+        /// Gets the number of jobs still to run.
+        /// </summary>
+        /// <value><c>true</c> if [more jobs to run]; otherwise, <c>false</c>.</value>
+        public int JobCount
+        {
+            get
+            {
+                lock (this)
+                {
+                    return jobs.Count;
+                }
+            }
+        }
+
+        /// <summary>A list of all completed jobs.</summary>
+        public List<IRunnable> CompletedJobs { get; set; }
+
         /// <summary>Occurs when all jobs completed.</summary>
         public event EventHandler AllJobsCompleted;
 
+        /// <summary>
+        /// Gets or sets a value indicating whether some jobs had errors.
+        /// </summary>
+        public bool SomeHadErrors { get; set; }
+
         /// <summary>Initializes a new instance of the <see cref="JobManager"/> class.</summary>
-        public JobManager()
+        /// <param name="maximumNumberOfProcessors">The maximum number of cores to use.</param>
+        public JobManager(int maximumNumberOfProcessors = -1)
         {
-            string NumOfProcessorsString = Environment.GetEnvironmentVariable("NUMBER_OF_PROCESSORS");
-            if (NumOfProcessorsString != null)
-                MaximumNumOfProcessors = Convert.ToInt32(NumOfProcessorsString);
-            MaximumNumOfProcessors = System.Math.Max(MaximumNumOfProcessors, 1);
+            if (maximumNumberOfProcessors != -1)
+                MaximumNumOfProcessors = maximumNumberOfProcessors;
+            else
+            {
+                string NumOfProcessorsString = Environment.GetEnvironmentVariable("NUMBER_OF_PROCESSORS");
+                if (NumOfProcessorsString != null)
+                    MaximumNumOfProcessors = Convert.ToInt32(NumOfProcessorsString);
+                MaximumNumOfProcessors = System.Math.Max(MaximumNumOfProcessors, 1);
+            }
         }
 
         /// <summary>Add a job to the list of jobs that need running.</summary>
@@ -84,18 +116,50 @@ namespace APSIM.Shared.Utilities
         /// <param name="waitUntilFinished">if set to <c>true</c> [wait until finished].</param>
         public void Start(bool waitUntilFinished)
         {
+            CompletedJobs = new List<IRunnable>();
+            SomeHadErrors = false;
+            allDone = false;
             schedulerThread = new BackgroundWorker();
             schedulerThread.WorkerSupportsCancellation = true;
             schedulerThread.WorkerReportsProgress = true;
             schedulerThread.DoWork += DoWork;
-            schedulerThread.RunWorkerAsync();
             schedulerThread.RunWorkerCompleted += OnWorkerCompleted;
-
+            schedulerThread.RunWorkerAsync();
+                
             if (waitUntilFinished)
             {
-                while (schedulerThread.IsBusy)
+                while (MoreJobsToRun)
                     Thread.Sleep(200);
             }
+        }
+
+        /// <summary>Run the jobs synchronously, without extra threads.</summary>
+        /// <remarks>Non threaded runs are useful for profiling.</remarks>
+        public void Run()
+        {
+            CompletedJobs = new List<IRunnable>();
+            SomeHadErrors = false;
+            allDone = false;
+            DoWorkEventArgs args = new DoWorkEventArgs(this);
+            while (jobs.Count > 0)
+            {
+                IRunnable job = jobs[0].Value;
+                try
+                {
+                    job.Run(this, args);
+                    job.IsCompleted = true;
+                    CompletedJobs.Add(job);
+                    jobs.RemoveAt(0);
+                }
+                catch (Exception err)
+                {
+                    job.ErrorMessage = err.ToString();
+                    SomeHadErrors = true;
+                }
+            }
+            allDone = true;
+            if (AllJobsCompleted != null)
+                AllJobsCompleted.Invoke(this, new EventArgs());
         }
 
         /// <summary>Stop all jobs currently running in the scheduler.</summary>
@@ -123,6 +187,13 @@ namespace APSIM.Shared.Utilities
         {
             if (AllJobsCompleted != null)
                 AllJobsCompleted.Invoke(this, new EventArgs());
+
+            // Look for errors in jobs.
+            foreach (IRunnable job in CompletedJobs)
+                if (job.ErrorMessage != null)
+                    SomeHadErrors = true;
+
+            allDone = true;
         }
 
         /// <summary>
@@ -135,7 +206,7 @@ namespace APSIM.Shared.Utilities
             BackgroundWorker bw = sender as BackgroundWorker;
             
             // Main worker thread for keeping jobs running
-            while (!bw.CancellationPending && MoreJobsToRun)
+            while (!bw.CancellationPending && JobCount > 0)
             {
                 int i = GetNextJobToRun();
                 if (i != -1)
@@ -168,7 +239,11 @@ namespace APSIM.Shared.Utilities
                 int i = GetJob(bw);
                 jobs[i].Value.IsCompleted = true;
                 if (e.Error != null)
+                {
+                    SomeHadErrors = true;
                     jobs[i].Value.ErrorMessage = e.Error.Message;
+                }
+                CompletedJobs.Add(jobs[i].Value);
                 jobs.RemoveAt(i);
             }
         }

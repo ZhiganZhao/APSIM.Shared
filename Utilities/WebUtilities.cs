@@ -11,6 +11,7 @@ namespace APSIM.Shared.Utilities
     using System.Net.Sockets;
     using System.Text;
     using System.Threading;
+    using System.Xml.Serialization;
 
     /// <summary>
     /// A class containing some web utilities
@@ -54,15 +55,15 @@ namespace APSIM.Shared.Utilities
         /// Send a string to the specified socket server. Returns the response string. Will throw
         /// if cannot connect.
         /// </summary>
-        public static string SocketSend(string ServerName, int Port, string Data)
+        public static string SocketSend(string serverName, int port, string data)
         {
             string Response = null;
             TcpClient Server = null;
             try
             {
-                Server = new TcpClient(ServerName, Convert.ToInt32(Port));
-                Byte[] data = System.Text.Encoding.ASCII.GetBytes(Data);
-                Server.GetStream().Write(data, 0, data.Length);
+                Server = new TcpClient(serverName, Convert.ToInt32(port));
+                Byte[] bData = System.Text.Encoding.ASCII.GetBytes(data);
+                Server.GetStream().Write(bData, 0, bData.Length);
 
                 Byte[] bytes = new Byte[8192];
 
@@ -82,6 +83,35 @@ namespace APSIM.Shared.Utilities
                 if (Server != null) Server.Close();
             }
             return Response;
+        }
+
+        /// <summary>Call REST web service.</summary>
+        /// <typeparam name="T">The return type</typeparam>
+        /// <param name="url">The URL of the REST service.</param>
+        /// <returns>The return data</returns>
+        public static T CallRESTService<T>(string url)
+        {
+            WebRequest wrGETURL;
+            wrGETURL = WebRequest.Create(url);
+            wrGETURL.Method = "GET";
+            wrGETURL.ContentType = @"application/xml; charset=utf-8";
+            wrGETURL.ContentLength = 0;
+            using (HttpWebResponse webresponse = wrGETURL.GetResponse() as HttpWebResponse)
+            {
+                Encoding enc = System.Text.Encoding.GetEncoding("utf-8");
+                // read response stream from response object
+                using (StreamReader loResponseStream = new StreamReader(webresponse.GetResponseStream(), enc))
+                {
+                    string st = loResponseStream.ReadToEnd();
+                    if (typeof(T).Name == "Object")
+                        return default(T);
+
+                    XmlSerializer serializer = new XmlSerializer(typeof(T));
+
+                    //ResponseData responseData;
+                    return (T)serializer.Deserialize(new XmlUtilities.NamespaceIgnorantXmlTextReader(new StringReader(st)));
+                }
+            }
         }
     }
 }

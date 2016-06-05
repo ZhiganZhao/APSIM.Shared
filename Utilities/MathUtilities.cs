@@ -48,7 +48,7 @@ namespace APSIM.Shared.Utilities
         /// </summary>
         public static bool IsGreaterThan(double value1, double value2)
         {
-            return value1 - value2 > tolerance;
+            return (value1 - value2) > tolerance;
         }
         
         /// <summary>
@@ -56,7 +56,7 @@ namespace APSIM.Shared.Utilities
         /// </summary>
         public static bool IsLessThan(double value1, double value2)
             {
-            return value2 - value1 > tolerance;
+            return (value2 - value1) > tolerance;
             }
        
         /// <summary>
@@ -550,6 +550,19 @@ namespace APSIM.Shared.Utilities
         }
 
         /// <summary>
+        /// Replace missing values with 'replacementValue'
+        /// </summary>
+        /// <param name="values">The values to search through.</param>
+        /// <param name="replacementValue">The value to use as the replacement.</param>
+        public static void ReplaceMissingValues(double[] values, double replacementValue)
+        {
+            if (values != null)
+                for (int i = 0; i < values.Length; i++)
+                    if (double.IsNaN(values[i]))
+                        values[i] = replacementValue;
+        }
+
+        /// <summary>
         /// Convert an array of strings to an array of doubles
         /// </summary>
         static public double[] StringsToDoubles(IList Values)
@@ -584,6 +597,32 @@ namespace APSIM.Shared.Utilities
         }
 
         /// <summary>
+        /// Calculate the percentile value from the sorted array of values
+        /// </summary>
+        /// <param name="sequence">Array of sorted values</param>
+        /// <param name="pctile">The percentile 0-1</param>
+        /// <returns>The percentile value</returns>
+        public static double Percentile(double[] sequence, double pctile)
+        {
+            int n;
+
+            n = sequence.Length;    //count the number of useful values
+
+            if ((n == 0) || (pctile < 0.0) || (pctile > 1.0))
+                return double.NaN;
+            else if (pctile == 1.0)
+            {
+                return sequence[n - 1];
+            }
+            else
+            {
+                int i = Convert.ToInt32(Math.Truncate(pctile * (n - 1)));       //Otherwise interpolate between the
+                double z = pctile * (n - 1) - i;                                //appropriate array elements
+                return sequence[i] * (1.0 - z) + sequence[i + 1] * z;
+            }
+        }
+
+        /// <summary>
         /// Return an array of numbers of the specified size that represents the
         /// y axis on a probability distribution graph.
         /// </summary>
@@ -605,8 +644,14 @@ namespace APSIM.Shared.Utilities
         /// <summary>
         /// A class encapsulating regression statistics.
         /// </summary>
+        [Serializable]
         public class RegrStats
         {
+            /// <summary>
+            /// Name of the variable being analysed
+            /// </summary>
+            public string Name;
+
             /// <summary>
             /// Number of observations
             /// </summary>
@@ -615,12 +660,12 @@ namespace APSIM.Shared.Utilities
             /// <summary>
             /// The slope
             /// </summary>
-            public double m;
+            public double Slope;
 
             /// <summary>
             /// The intercept
             /// </summary>
-            public double c;
+            public double Intercept;
 
             /// <summary>
             /// Standard error of the slope
@@ -630,7 +675,7 @@ namespace APSIM.Shared.Utilities
             /// <summary>
             /// Standard error of the intercept
             /// </summary>
-            public double SEcoeff;
+            public double SEintercept;
 
             /// <summary>
             /// The R squared
@@ -638,29 +683,14 @@ namespace APSIM.Shared.Utilities
             public double R2;
 
             /// <summary>
-            /// 
+            /// The root mean squared error
             /// </summary>
-            public double ADJR2;
-
-            /// <summary>
-            /// 
-            /// </summary>
-            public double R2YX;
-
-            /// <summary>
-            /// 
-            /// </summary>
-            public double VarRatio;
-
-            /// <summary>
-            /// The root mean squared deviation
-            /// </summary>
-            public double RMSD;
+            public double RMSE;
 
             /// <summary>
             /// Nash-Sutcliff efficiency
             /// </summary>
-            public double NSE;        
+            public double NSE;
 
             /// <summary>
             /// Mean error
@@ -670,7 +700,7 @@ namespace APSIM.Shared.Utilities
             /// <summary>
             /// Mean absolute error
             /// </summary>
-            public double MAE;        
+            public double MAE;
 
             /// <summary>
             /// Root mean square error to Standard deviation Ratio
@@ -681,10 +711,11 @@ namespace APSIM.Shared.Utilities
         /// <summary>
         /// Calculate regression statistics for the given x and y values.
         /// </summary>
-        /// <param name="X"></param>
-        /// <param name="Y"></param>
+        /// <param name="name">Name of variable being analysed.</param>
+        /// <param name="X">Collection of X values.</param>
+        /// <param name="Y">Collection of Y values.</param>
         /// <returns></returns>
-        static public RegrStats CalcRegressionStats(IEnumerable X, IEnumerable Y)
+        static public RegrStats CalcRegressionStats(string name, IEnumerable Y, IEnumerable X)
         {
             RegrStats stats = new RegrStats();
             double SumX = 0;
@@ -692,7 +723,6 @@ namespace APSIM.Shared.Utilities
             double SumXY = 0;
             double SumX2 = 0;
             double SumY2 = 0;
-            double SumXYdiff2 = 0;
             double CSSX, CSSXY;
             double Xbar, Ybar;
             double TSS, TSSM;
@@ -705,16 +735,14 @@ namespace APSIM.Shared.Utilities
             double SumOfSquaredOPResiduals = 0; //SUM i=1->n  ((O(i) - P(i)) ^ 2)
             double SumOfSquaredSD = 0;          //SUM i=1->n  ((O(i) - Omean) ^ 2)
 
+            stats.Name = name;
             stats.n = 0;
-            stats.m = 0.0;
-            stats.c = 0.0;
+            stats.Slope = 0.0;
+            stats.Intercept = 0.0;
             stats.SEslope = 0.0;
-            stats.SEcoeff = 0.0;
+            stats.SEintercept = 0.0;
             stats.R2 = 0.0;
-            stats.ADJR2 = 0.0;
-            stats.R2YX = 0.0;
-            stats.VarRatio = 0.0;
-            stats.RMSD = 0.0;
+            stats.RMSE = 0.0;
 
             int Num_points = 0;
             IEnumerator xEnum = X.GetEnumerator();
@@ -734,10 +762,10 @@ namespace APSIM.Shared.Utilities
                     SumY2 = SumY2 + yValue * yValue;       // SS for y
                     SumXY = SumXY + xValue * yValue;       // SS for products
 
-                    SumOfSquaredResiduals += System.Math.Pow(xValue - yValue, 2);
-                    SumOfResiduals += xValue - yValue;
-                    SumOfAbsResiduals += System.Math.Abs(xValue - yValue);
-                    SumOfSquaredOPResiduals += System.Math.Pow(yValue - xValue, 2);
+                    SumOfSquaredResiduals += Math.Pow(yValue - xValue, 2);
+                    SumOfResiduals += yValue - xValue;
+                    SumOfAbsResiduals += Math.Abs(yValue - xValue);
+                    SumOfSquaredOPResiduals += Math.Pow(yValue - xValue, 2);
 
                     Num_points++;
                 }
@@ -753,52 +781,40 @@ namespace APSIM.Shared.Utilities
             {
                 double xValue = Convert.ToDouble(xEnum.Current);
                 double yValue = Convert.ToDouble(yEnum.Current);
-                if (!double.IsNaN(xValue) && !double.IsNaN(yValue) )
-                    SumOfSquaredSD += System.Math.Pow(xValue - Xbar, 2);
+                if (!double.IsNaN(xValue) && !double.IsNaN(yValue))
+                {
+                    SumOfSquaredSD += Math.Pow(xValue - Xbar, 2);
+                }
             }
 
             CSSXY = SumXY - SumX * SumY / Num_points;     // Corrected SS for products
             CSSX = SumX2 - SumX * SumX / Num_points;      // Corrected SS for X
             stats.n = Num_points;
-            stats.m = CSSXY / CSSX;                             // Calculate slope
-            stats.c = Ybar - stats.m * Xbar;                          // Calculate intercept
+            stats.Slope = CSSXY / CSSX;                   // Calculate slope
+            stats.Intercept = Ybar - stats.Slope * Xbar;  // Calculate intercept
 
             TSS = SumY2 - SumY * SumY / Num_points;       // Corrected SS for Y = Sum((y-ybar)^2)
             TSSM = TSS / (Num_points - 1);                // Total mean SS
-            REGSS = stats.m * CSSXY;                            // SS due to regression = Sum((yest-ybar)^2)
+            REGSS = stats.Slope * CSSXY;                  // SS due to regression = Sum((yest-ybar)^2)
             REGSSM = REGSS;                               // Regression mean SS
             RESIDSS = TSS - REGSS;                        // SS about the regression = Sum((y-yest)^2)
 
             if (Num_points > 2)                           // MUST HAVE MORE THAN TWO POINTS FOR REG
-                RESIDSSM = RESIDSS / (Num_points - 2);     // Residual mean SS, variance of residual
+                RESIDSSM = RESIDSS / (Num_points - 2);    // Residual mean SS, variance of residual
             else
                 RESIDSSM = 0.0;
 
-            stats.RMSD = System.Math.Sqrt(RESIDSSM);                        // Root mean square deviation
-            stats.VarRatio = REGSSM / RESIDSSM;                  // Variance ratio - for F test (1,n-2)
-            stats.R2 = 1.0 - (RESIDSS / TSS);                   // Unadjusted R2 calculated from SS
-            stats.ADJR2 = 1.0 - (RESIDSSM / TSSM);              // Adjusted R2 calculated from mean SS
-            if (stats.ADJR2 < 0.0)
-                stats.ADJR2 = 0.0;
-            S2 = RESIDSSM;                                // Resid. MSS is estimate of variance
+            stats.RMSE = Math.Sqrt(SumOfSquaredResiduals / stats.n); // Root mean square error
+            stats.R2 = 1.0 - (RESIDSS / TSS);                        // Unadjusted R2 calculated from SS
+            S2 = RESIDSSM;                                           // Resid. MSS is estimate of variance
             // about the regression
             stats.SEslope = System.Math.Sqrt(S2) / System.Math.Sqrt(CSSX);              // Standard errors estimated from S2 & CSSX
-            stats.SEcoeff = System.Math.Sqrt(S2) * System.Math.Sqrt(SumX2 / (Num_points * CSSX));
+            stats.SEintercept = System.Math.Sqrt(S2) * System.Math.Sqrt(SumX2 / (Num_points * CSSX));
 
-            // Statistical parameters of Butler, Mayer and Silburn
-
-            stats.R2YX = 1.0 - (SumXYdiff2 / TSS);              // If you are on the 1:1 line then R2YX=1
-
-            // If R2YX is -ve then the 1:1 line is a worse fit than the line y=ybar
-
-            //      MeanAbsError = SumXYdiff / Num_points;
-            //      MeanAbsPerError = SumXYDiffPer / Num_points;  // very dangerous when y is low
-            // could use MeanAbsError over mean
-
-            stats.NSE = 1 - SumOfSquaredResiduals / SumOfSquaredSD;                    // Nash-Sutcliff efficiency
-            stats.ME = 1 / (double)stats.n * SumOfResiduals;                         // Mean error
-            stats.MAE = 1 / (double)stats.n * SumOfAbsResiduals;                     // Mean Absolute Error
-            stats.RSR = Sqr(SumOfSquaredOPResiduals) / Sqr(SumOfSquaredSD);  // Root mean square error to Standard deviation Ratio
+            stats.NSE = 1.0 - SumOfSquaredResiduals / SumOfSquaredSD;     // Nash-Sutcliff efficiency
+            stats.ME =  1.0 / (double)stats.n * SumOfResiduals;           // Mean error
+            stats.MAE = 1.0 / (double)stats.n * SumOfAbsResiduals;        // Mean Absolute Error
+            stats.RSR = stats.RMSE / Math.Sqrt((1.0 / (stats.n - 1)) * SumOfSquaredSD);         // Root mean square error to Standard deviation Ratio
             
             return stats;
         }
@@ -1123,6 +1139,39 @@ namespace APSIM.Shared.Utilities
                     NewValues.Add(Values[i]);
             }
             return NewValues.ToArray();
+        }
+
+        /// <summary>Return the last value that isn't a missing value.</summary>
+        /// <param name="Values">The values.</param>
+        /// <returns></returns>
+        public static double LastValue(double[] Values)
+        {
+            if (Values == null) return double.NaN;
+            for (int i = Values.Length - 1; i >= 0; i--)
+                if (!double.IsNaN(Values[i]))
+                    return Values[i];
+            return 0;
+        }
+
+        /// <summary>Return the second last value that isn't a missing value.</summary>
+        /// <param name="Values">The values.</param>
+        /// <returns></returns>
+        public static double SecondLastValue(double[] Values)
+        {
+            bool foundLastValue = false;
+            if (Values == null) return double.NaN;
+            for (int i = Values.Length - 1; i >= 0; i--)
+            {
+                if (!double.IsNaN(Values[i]))
+                {
+                    if (foundLastValue)
+                        return Values[i];
+                    else
+                        foundLastValue = true;
+                }
+            }
+
+            return 0;
         }
 
         /// <summary>
@@ -1558,5 +1607,37 @@ namespace APSIM.Shared.Utilities
 
             return newValues;
         }
+
+
+        /// <summary>
+        /// From: http://stackoverflow.com/questions/545703/combination-of-listlistint
+        /// </summary>
+        public static List<List<T>> AllCombinationsOf<T>(params List<T>[] sets)
+        {
+            // need array bounds checking etc for production
+            var combinations = new List<List<T>>();
+
+            // prime the data
+            if (sets.Length > 0)
+            {
+                foreach (var value in sets[0])
+                    combinations.Add(new List<T> { value });
+
+                foreach (var set in sets.Skip(1))
+                    combinations = AddExtraSet(combinations, set);
+            }
+            return combinations;
+        }
+
+        private static List<List<T>> AddExtraSet<T>
+             (List<List<T>> combinations, List<T> set)
+        {
+            var newCombinations = from value in set
+                                  from combination in combinations
+                                  select new List<T>(combination) { value };
+
+            return newCombinations.ToList();
+        }
+
     }
 }
